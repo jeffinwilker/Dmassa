@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Edit, Sparkles, X, Shuffle } from "lucide-react";
+import { Plus, Trash2, Edit, Sparkles, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
