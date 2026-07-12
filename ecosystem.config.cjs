@@ -36,16 +36,19 @@ module.exports = {
     },
     {
       name: "dmassa-worker",
-      // Worker BullMQ - implementacao na Fase 3.
-      // Deixamos comentado por enquanto.
-      script: "npx",
-      args: "tsx src/workers/index.ts",
+      script: "node_modules/tsx/dist/cli.mjs",
+      args: "src/workers/index.ts",
       cwd: __dirname,
       instances: 1,
       exec_mode: "fork",
-      autorestart: false, // true a partir da Fase 3
-      env: { NODE_ENV: "production" },
-      max_memory_restart: "300M",
+      autorestart: true,
+      env: {
+        NODE_ENV: "production",
+        NODE_PATH: "./node_modules",
+        TSX_TSCONFIG_PATH: "./tsconfig.json",
+        WORKER_CONCURRENCY: process.env.WORKER_CONCURRENCY || "5",
+      },
+      max_memory_restart: "500M",
       out_file: "./logs/worker-out.log",
       error_file: "./logs/worker-err.log",
       merge_logs: true,

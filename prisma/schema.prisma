@@ -197,6 +197,13 @@ model Campaign {
   locationLng     Float?
   locationName    String?
 
+  // Publico-alvo
+  audienceMode          String   @default("ALL")   // ALL | TAGS | MANUAL
+  audienceTagIds        String[] @default([])
+  audienceRequireAllTags Boolean @default(false)   // AND (true) vs OR (false)
+  excludeBlacklisted    Boolean  @default(true)
+  excludeInConversation Boolean  @default(true)
+
   // Anti-ban
   delayMinSec         Int     @default(5)
   delayMaxSec         Int     @default(15)
