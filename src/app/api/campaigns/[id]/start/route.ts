@@ -1,0 +1,164 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getOwnerId } from "@/lib/auth-owner";
+import { campaignQueue } from "@/lib/queue";
+import { buildAudienceWhere } from "@/lib/audience";
+import { assignInstancesToContacts, computeSchedule } from "@/lib/scheduler";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+export async function POST(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const ownerId = await getOwnerId();
+
+  const campaign = await prisma.campaign.findFirst({
+    where: { id, ownerId },
+    include: { instances: true },
+  });
+  if (!campaign) return NextResponse.json({ error: "Nao encontrada" }, { status: 404 });
+  if (!["DRAFT", "SCHEDULED", "PAUSED"].includes(campaign.status)) {
+    return NextResponse.json(
+      { error: `Campanha esta ${campaign.status} — nao pode iniciar` },
+      { status: 409 },
+    );
+  }
+
+  // 1. Resolver instancias elegiveis
+  let instances;
+  if (campaign.useAllInstances) {
+    instances = await prisma.instance.findMany({ where: { ownerId, status: "CONNECTED" } });
+  } else {
+    const ids = campaign.instances.map((ci) => ci.instanceId);
+    instances = await prisma.instance.findMany({
+      where: { id: { in: ids }, ownerId, status: "CONNECTED" },
+    });
+  }
+  if (instances.length === 0) {
+    return NextResponse.json(
+      { error: "Nenhuma instancia conectada disponivel pra esta campanha" },
+      { status: 400 },
+    );
+  }
+
+  // 2. Resolver contatos alvo
+  let contactIds: string[];
+  if (campaign.audienceMode === "MANUAL") {
+    const rows = await prisma.campaignContact.findMany({
+      where: { campaignId: id },
+      select: { contactId: true },
+    });
+    contactIds = rows.map((r) => r.contactId);
+  } else {
+    const where = buildAudienceWhere(ownerId, {
+      mode: campaign.audienceMode as "ALL" | "TAGS" | "MANUAL",
+      tagIds: campaign.audienceTagIds,
+      requireAllTags: campaign.audienceRequireAllTags,
+      excludeBlacklisted: campaign.excludeBlacklisted,
+      excludeInConversation: campaign.excludeInConversation,
+    });
+    const contacts = await prisma.contact.findMany({ where, select: { id: true } });
+    contactIds = contacts.map((c) => c.id);
+  }
+  if (contactIds.length === 0) {
+    return NextResponse.json({ error: "Nenhum contato no publico-alvo" }, { status: 400 });
+  }
+
+  // 3. Distribui em instancias respeitando peso + limite diario
+  const assignments = assignInstancesToContacts(contactIds, instances);
+  if ("error" in assignments) {
+    return NextResponse.json({ error: assignments.error }, { status: 400 });
+  }
+
+  // 4. Materializa CampaignContact (se nao for MANUAL, cria os links)
+  if (campaign.audienceMode !== "MANUAL") {
+    // Idempotente: se re-iniciando (era PAUSED), skipRelinking. Aqui zeramos e recriamos
+    // Nota: em PAUSED nao chegamos aqui porque o start bloqueia? Deixa reiniciar do zero.
+    await prisma.campaignContact.deleteMany({ where: { campaignId: id } });
+    await prisma.campaignContact.createMany({
+      data: assignments.map((a) => ({ campaignId: id, contactId: a.contactId })),
+      skipDuplicates: true,
+    });
+  }
+
+  // 5. Cria MessageJob pra cada contato (pending). Se ja existir para o mesmo
+  // par (campaign, contact), pula pra permitir resume sem duplicar.
+  const existingJobs = await prisma.messageJob.findMany({
+    where: { campaignId: id, contactId: { in: contactIds } },
+    select: { contactId: true, id: true, status: true },
+  });
+  const existingByContact = new Map(existingJobs.map((j) => [j.contactId, j]));
+
+  const toCreate = assignments
+    .filter((a) => !existingByContact.has(a.contactId))
+    .map((a) => ({
+      campaignId: id,
+      contactId: a.contactId,
+      instanceId: a.instanceId,
+      status: "PENDING" as const,
+    }));
+  if (toCreate.length) {
+    await prisma.messageJob.createMany({ data: toCreate });
+  }
+
+  // Recarrega jobs pra pegar ids
+  const jobs = await prisma.messageJob.findMany({
+    where: { campaignId: id },
+    select: { id: true, contactId: true, status: true },
+  });
+  const jobByContact = new Map(jobs.map((j) => [j.contactId, j]));
+
+  // 6. Calcula cronograma e enfileira
+  const schedule = computeSchedule(campaign, assignments, instances);
+
+  const queue = campaignQueue();
+  const nowMs = Date.now();
+  let enqueued = 0;
+  for (const item of schedule) {
+    const mj = jobByContact.get(item.contactId);
+    if (!mj) continue;
+    if (["SENT", "DELIVERED", "READ"].includes(mj.status)) continue;
+
+    await queue.add(
+      "send",
+      {
+        messageJobId: mj.id,
+        campaignId: id,
+        contactId: item.contactId,
+        instanceId: item.instanceId,
+      },
+      {
+        delay: item.delayMs,
+        jobId: `mj:${mj.id}`, // idempotente
+      },
+    );
+    enqueued++;
+    // Atualiza instanceId caso tenha mudado
+    await prisma.messageJob.update({
+      where: { id: mj.id },
+      data: { instanceId: item.instanceId, status: "SCHEDULED" },
+    });
+    void nowMs;
+  }
+
+  // 7. Marca campanha como RUNNING
+  await prisma.campaign.update({
+    where: { id },
+    data: {
+      status: "RUNNING",
+      startedAt: campaign.startedAt ?? new Date(),
+      pausedAt: null,
+      totalContacts: contactIds.length,
+    },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    totalContacts: contactIds.length,
+    enqueued,
+    estimatedFinishInSec: Math.max(...schedule.map((s) => s.delayMs), 0) / 1000,
+  });
+}
