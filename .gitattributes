@@ -1,0 +1,37 @@
+# Normaliza line endings.
+# Arquivos de texto: LF no repo, sistema decide no working tree.
+* text=auto eol=lf
+
+# Scripts shell PRECISAM ser LF (rodam no Linux/VPS)
+*.sh          text eol=lf
+Caddyfile     text eol=lf
+
+# Arquivos que devem manter LF sempre
+*.ts          text eol=lf
+*.tsx         text eol=lf
+*.js          text eol=lf
+*.cjs         text eol=lf
+*.mjs         text eol=lf
+*.json        text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.md          text eol=lf
+*.css         text eol=lf
+*.html        text eol=lf
+*.prisma      text eol=lf
+
+# Bat files: CRLF (Windows)
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
+
+# Binarios
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.webp        binary
+*.ico         binary
+*.woff        binary
+*.woff2       binary
+*.pdf         binary

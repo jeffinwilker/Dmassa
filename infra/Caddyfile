@@ -1,0 +1,57 @@
+# =========================================================================
+# Caddyfile - reverse proxy + HTTPS automatico para Dmassa
+# =========================================================================
+#
+# Instale o Caddy no host (ver README).
+# Copie este arquivo para /etc/caddy/Caddyfile e edite os {$VARS}.
+#
+# Sem dominio? Use sslip.io: substitua APP_DOMAIN por
+# "SEU-IP-COM-HIFENS.sslip.io" (ex: 192-168-1-100.sslip.io).
+# O Caddy pega certificado do Let's Encrypt automaticamente via HTTP-01.
+#
+# Ao mudar o arquivo:
+#   sudo systemctl reload caddy
+# =========================================================================
+
+# --- App principal --------------------------------------------------------
+{$APP_DOMAIN} {
+	# Proxy pro Next.js rodando via PM2 na porta 3000
+	reverse_proxy 127.0.0.1:3000
+
+	# Headers de seguranca
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Comprime respostas
+	encode zstd gzip
+
+	# Log em /var/log/caddy/dmassa.log
+	log {
+		output file /var/log/caddy/dmassa.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format console
+	}
+}
+
+# --- Midias (MinIO publico) ----------------------------------------------
+#
+# Descomente esta secao se quiser servir as midias por um subdominio.
+# Necessario pra que o WhatsApp/Evolution consiga BAIXAR as midias que
+# voce envia (imagem, video, audio, PDF).
+#
+# Se voce nao tem dominio proprio, use outra label sslip.io tambem
+# (ex: media-<IP>.sslip.io) ou mantenha as midias sendo servidas
+# pelo proprio app (Next.js) via /api/media/[key].
+#
+# {$MEDIA_DOMAIN} {
+# 	reverse_proxy 127.0.0.1:9000
+# 	header -Server
+# 	encode zstd gzip
+# }

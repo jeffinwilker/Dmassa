@@ -1,0 +1,337 @@
+// Dmassa - schema Prisma
+// Uso single-user por enquanto; ownerId presente em tudo pra facilitar
+// migracao pra multi-tenant (SaaS) depois trocando por Organization.id.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =========================================================================
+// AUTENTICACAO
+// =========================================================================
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  role         UserRole @default(OWNER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  OPERATOR
+}
+
+// =========================================================================
+// INSTANCIAS WHATSAPP (chips conectados ao Evolution API)
+// =========================================================================
+
+model Instance {
+  id                String         @id @default(cuid())
+  ownerId           String
+  name              String         // rotulo amigavel ("Chip 01 - Vendas")
+  evolutionInstance String         @unique // nome dentro do Evolution API
+  apiKey            String?        // hash da chave especifica do Evolution
+  phoneNumber       String?        // numero conectado (preenchido apos QR)
+  status            InstanceStatus @default(DISCONNECTED)
+  tier              InstanceTier   @default(STANDARD)
+  weight            Int            @default(1) // peso na rotacao
+  // Aquecimento de chip: 0..14 (dias). 0 = chip novinho, 14 = totalmente maduro.
+  warmupStage       Int            @default(14)
+  maxPerDay         Int            @default(500)
+  sentToday         Int            @default(0)
+  lastResetAt       DateTime       @default(now())
+  lastQrCode        String?        // ultimo QR base64 recebido do Evolution
+  lastConnectionAt  DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  campaignInstances CampaignInstance[]
+  messageJobs       MessageJob[]
+
+  @@index([ownerId])
+  @@index([ownerId, status])
+}
+
+enum InstanceStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  BANNED
+  ERROR
+}
+
+enum InstanceTier {
+  STANDARD    // sem ajuste
+  ENTERPRISE  // +30s texto / +90s midia
+}
+
+// =========================================================================
+// CONTATOS + TAGS
+// =========================================================================
+
+model Contact {
+  id                String    @id @default(cuid())
+  ownerId           String
+  name              String?
+  whatsapp          String    // formato E.164 sem "+" (ex: 5511999999999)
+  hasWhatsapp       Boolean?  // resultado da validacao via Evolution
+  lastValidatedAt   DateTime?
+  isBlacklisted     Boolean   @default(false)
+  blacklistedAt     DateTime?
+  blacklistReason   String?
+  inConversation    Boolean   @default(false) // pausar disparos se cliente respondeu
+  lastRepliedAt     DateTime?
+  meta              Json?     // campos extras do CSV (nome, primeiro_nome, cpf, etc.)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tags              ContactTagLink[]
+  campaignContacts  CampaignContact[]
+  messageJobs       MessageJob[]
+
+  @@unique([ownerId, whatsapp])
+  @@index([ownerId, isBlacklisted])
+  @@index([ownerId, hasWhatsapp])
+}
+
+model ContactTag {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String
+  color     String   @default("#6366f1")
+  createdAt DateTime @default(now())
+
+  contacts  ContactTagLink[]
+
+  @@unique([ownerId, name])
+}
+
+model ContactTagLink {
+  contactId String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  contact   Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       ContactTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@index([tagId])
+}
+
+// =========================================================================
+// SPINTAX (biblioteca de variaveis)
+// =========================================================================
+
+model SpintaxVariable {
+  id          String   @id @default(cuid())
+  ownerId     String?  // null = variavel de sistema (compartilhada)
+  name        String   // slug snake_case: "saudacao", "despedida"
+  label       String?  // nome bonito exibido na UI: "Saudações"
+  values      String[] // ["oi", "olá", "e aí"]
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+// =========================================================================
+// MIDIAS
+// =========================================================================
+
+model MediaAsset {
+  id        String     @id @default(cuid())
+  ownerId   String
+  kind      MediaKind
+  fileName  String
+  mimeType  String
+  size      Int
+  key       String     // S3 key
+  url       String     // URL publica (usada no envio via Evolution)
+  duration  Int?       // segundos (audio/video)
+  createdAt DateTime   @default(now())
+
+  campaigns Campaign[]
+
+  @@index([ownerId, kind])
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+// =========================================================================
+// CAMPANHAS
+// =========================================================================
+
+model Campaign {
+  id          String         @id @default(cuid())
+  ownerId     String
+  name        String
+  status      CampaignStatus @default(DRAFT)
+  messageType MessageType    @default(TEXT)
+
+  // Conteudo (apenas o campo correspondente ao messageType e preenchido)
+  text            String?
+  caption         String?   // legenda para midia
+  mediaAssetId    String?
+  contactVcard    String?   // vCard bruto
+  contactVcardName String?
+  locationLat     Float?
+  locationLng     Float?
+  locationName    String?
+
+  // Anti-ban
+  delayMinSec         Int     @default(5)
+  delayMaxSec         Int     @default(15)
+  restEveryN          Int     @default(20)
+  restForSec          Int     @default(600)
+  allowedHourStart    Int     @default(8)   // 0..23
+  allowedHourEnd      Int     @default(20)  // 0..23
+  simulateTyping      Boolean @default(true)
+  shuffleContacts     Boolean @default(true)
+  validateBeforeSend  Boolean @default(true) // checar hasWhatsapp
+  useAllInstances     Boolean @default(true)
+
+  // Agendamento
+  scheduledFor DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  pausedAt     DateTime?
+
+  // Contadores agregados (atualizados pelo worker)
+  totalContacts   Int @default(0)
+  sentCount       Int @default(0)
+  deliveredCount  Int @default(0)
+  readCount       Int @default(0)
+  failedCount     Int @default(0)
+  skippedCount    Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media       MediaAsset?        @relation(fields: [mediaAssetId], references: [id])
+  instances   CampaignInstance[]
+  contacts    CampaignContact[]
+  messageJobs MessageJob[]
+
+  @@index([ownerId, status])
+  @@index([status, scheduledFor])
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  CONTACT
+  LOCATION
+}
+
+model CampaignInstance {
+  campaignId String
+  instanceId String
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, instanceId])
+}
+
+model CampaignContact {
+  campaignId String
+  contactId  String
+  addedAt    DateTime @default(now())
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, contactId])
+  @@index([contactId])
+}
+
+// =========================================================================
+// MESSAGE JOBS (cada envio individual)
+// =========================================================================
+
+model MessageJob {
+  id                 String           @id @default(cuid())
+  campaignId         String
+  contactId          String
+  instanceId         String?
+  status             MessageJobStatus @default(PENDING)
+  renderedText       String?          // texto final apos spintax + variaveis
+  whatsappMessageId  String?          // id da mensagem no WhatsApp
+  bullJobId          String?
+  attempts           Int              @default(0)
+  errorCode          String?
+  errorMessage       String?
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  readAt             DateTime?
+  failedAt           DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id])
+  instance  Instance? @relation(fields: [instanceId], references: [id])
+
+  @@index([campaignId, status])
+  @@index([contactId])
+  @@index([whatsappMessageId])
+}
+
+enum MessageJobStatus {
+  PENDING
+  SCHEDULED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+// =========================================================================
+// WEBHOOK LOG (auditoria e replay)
+// =========================================================================
+
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  event         String    // messages.upsert, connection.update, etc.
+  instanceName  String?   // qual instancia do Evolution
+  payload       Json
+  processedAt   DateTime?
+  processError  String?
+  receivedAt    DateTime  @default(now())
+
+  @@index([event, receivedAt])
+  @@index([instanceName])
+}

@@ -1,0 +1,51 @@
+# deps
+node_modules/
+.pnp
+.pnp.js
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# next
+.next/
+out/
+build/
+dist/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# testing
+coverage/
+.nyc_output/
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# ide
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# prisma
+apps/web/prisma/*.db
+apps/web/prisma/*.db-journal
+
+# uploads locais (fallback quando MinIO nao esta disponivel)
+uploads/
+
+# docker
+docker-data/
