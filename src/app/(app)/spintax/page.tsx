@@ -1,18 +1,16 @@
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { SpintaxClient } from "./spintax-client";
+
+export const dynamic = "force-dynamic";
 
 export default function SpintaxPage() {
   return (
     <div>
       <PageHeader
         title="Biblioteca Spintax"
-        description="Crie variáveis reutilizáveis para variar suas mensagens (ex.: {saudacao} = [oi, olá, e aí])."
+        description="Variáveis que expandem para valores aleatórios. Use nas campanhas escrevendo {saudacao}, {nome}, etc — o worker sorteia um valor por envio."
       />
-      <Card>
-        <CardContent className="py-16 text-center text-muted-foreground">
-          Em construção (Fase 2). Aqui você cria e edita variáveis Spintax.
-        </CardContent>
-      </Card>
+      <SpintaxClient />
     </div>
   );
 }
