@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 
-export default function LoginPage() {
+// useSearchParams em Next 15 exige Suspense boundary — por isso separamos
+// o form em um componente interno.
+function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
   const nextPath = search.get("next") ?? "/dashboard";
@@ -44,6 +46,40 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={submit} className="space-y-4">
+      <div>
+        <Label htmlFor="email">Email</Label>
+        <Input
+          id="email"
+          type="email"
+          value={email}
+          autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          className="mt-1.5"
+        />
+      </div>
+      <div>
+        <Label htmlFor="password">Senha</Label>
+        <Input
+          id="password"
+          type="password"
+          value={password}
+          autoComplete="current-password"
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          className="mt-1.5"
+        />
+      </div>
+      <Button type="submit" className="w-full" disabled={loading}>
+        {loading ? "Entrando..." : "Entrar"}
+      </Button>
+    </form>
+  );
+}
+
+export default function LoginPage() {
+  return (
     <div className="min-h-screen flex items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-sm">
         <CardContent className="p-8">
@@ -54,36 +90,9 @@ export default function LoginPage() {
             <h1 className="text-2xl font-semibold">Dmassa</h1>
             <p className="text-sm text-muted-foreground">Faça login para continuar.</p>
           </div>
-
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                autoComplete="email"
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="mt-1.5"
-              />
-            </div>
-            <div>
-              <Label htmlFor="password">Senha</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                autoComplete="current-password"
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="mt-1.5"
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Entrando..." : "Entrar"}
-            </Button>
-          </form>
+          <React.Suspense fallback={<div className="h-40" />}>
+            <LoginForm />
+          </React.Suspense>
         </CardContent>
       </Card>
     </div>
