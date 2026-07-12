@@ -26,9 +26,14 @@ git reset --hard origin/main
 echo ">>> [3/6] npm ci..."
 npm ci --no-audit --no-fund
 
-echo ">>> [4/6] prisma generate + migrate deploy..."
+echo ">>> [4/6] prisma generate + db push..."
+# Usamos db push (schema-first) em vez de migrate deploy pra simplificar
+# a Fase 1-2 (single-user, sem historico de migrations). db push adiciona
+# novos campos e tabelas com seguranca; se detectar mudanca destrutiva
+# (drop column/table) sem --accept-data-loss, o script falha e voce
+# resolve manualmente.
 npx prisma generate
-npx prisma migrate deploy
+npx prisma db push --skip-generate
 
 echo ">>> [5/6] next build..."
 npm run build
