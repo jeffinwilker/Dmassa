@@ -20,7 +20,7 @@ module.exports = {
       exec_mode: "fork",
       env: {
         NODE_ENV: "production",
-        PORT: 3000,
+        PORT: process.env.APP_PORT || 3000,
         HOSTNAME: "127.0.0.1",
       },
       // Reinicia se travar / vazar memoria

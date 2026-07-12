@@ -1,0 +1,31 @@
+# =========================================================================
+# Snippet Caddy do Dmassa - para VPS que JA tem outros sites no Caddy.
+#
+# Instale em /etc/caddy/sites/dmassa.caddy e adicione ao Caddyfile principal
+# a linha (uma vez so):
+#
+#   import /etc/caddy/sites/*.caddy
+#
+# Define APP_DOMAIN e APP_PORT no drop-in do systemd (ver README).
+# =========================================================================
+
+{$APP_DOMAIN} {
+	reverse_proxy 127.0.0.1:{$APP_PORT:3000}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/dmassa.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format console
+	}
+}

@@ -15,8 +15,8 @@
 
 # --- App principal --------------------------------------------------------
 {$APP_DOMAIN} {
-	# Proxy pro Next.js rodando via PM2 na porta 3000
-	reverse_proxy 127.0.0.1:3000
+	# Proxy pro Next.js via PM2. Porta configuravel via $APP_PORT (default 3000).
+	reverse_proxy 127.0.0.1:{$APP_PORT:3000}
 
 	# Headers de seguranca
 	header {
