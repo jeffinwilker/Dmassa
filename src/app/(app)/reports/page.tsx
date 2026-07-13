@@ -7,6 +7,7 @@ import {
   Ban,
   Users,
   TrendingUp,
+  Clock,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -79,6 +80,7 @@ async function getStats() {
         deliveredCount: true,
         readCount: true,
         failedCount: true,
+        skippedCount: true,
         createdAt: true,
       },
     }),
@@ -191,7 +193,7 @@ export default async function ReportsPage() {
       </div>
 
       {/* Contadores auxiliares */}
-      <div className="grid gap-3 md:grid-cols-3 mb-6">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4 mb-6">
         <MetricCard
           label="Contatos ativos"
           value={s.activeContacts.toLocaleString("pt-BR")}
@@ -209,6 +211,12 @@ export default async function ReportsPage() {
           value={s.totalFailed.toLocaleString("pt-BR")}
           icon={XCircle}
           color="text-destructive"
+        />
+        <MetricCard
+          label="Pulados totais"
+          value={s.totalSkipped.toLocaleString("pt-BR")}
+          icon={Clock}
+          color="text-muted-foreground"
         />
       </div>
 
@@ -229,10 +237,12 @@ export default async function ReportsPage() {
                   <tr>
                     <th className="text-left px-4 py-2 font-medium">Campanha</th>
                     <th className="text-left px-4 py-2 font-medium">Status</th>
+                    <th className="text-right px-4 py-2 font-medium">Alvo</th>
                     <th className="text-right px-4 py-2 font-medium">Enviados</th>
                     <th className="text-right px-4 py-2 font-medium">Entregues</th>
                     <th className="text-right px-4 py-2 font-medium">Lidos</th>
                     <th className="text-right px-4 py-2 font-medium">Falhas</th>
+                    <th className="text-right px-4 py-2 font-medium">Pulados</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -254,6 +264,9 @@ export default async function ReportsPage() {
                           {c.status}
                         </Badge>
                       </td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">
+                        {c.totalContacts.toLocaleString("pt-BR")}
+                      </td>
                       <td className="px-4 py-2.5 text-right font-medium">
                         {c.sentCount.toLocaleString("pt-BR")}
                       </td>
@@ -265,6 +278,9 @@ export default async function ReportsPage() {
                       </td>
                       <td className="px-4 py-2.5 text-right text-destructive">
                         {c.failedCount.toLocaleString("pt-BR")}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">
+                        {c.skippedCount.toLocaleString("pt-BR")}
                       </td>
                     </tr>
                   ))}

@@ -30,7 +30,10 @@ interface EvolutionWebhookPayload {
   data?: {
     state?: string;
     key?: EvolutionKey;
-    status?: string;              // sent | delivered | read
+    keyId?: string;               // Evolution v2 as vezes usa keyId direto
+    remoteJid?: string;
+    fromMe?: boolean;
+    status?: string | number;     // SERVER_ACK, DELIVERY_ACK, READ, PLAYED, ou 1-5
     message?: EvolutionMessage;
     messageType?: string;
     pushName?: string;
@@ -43,6 +46,37 @@ const stateMap = {
   close: "DISCONNECTED",
   refused: "ERROR",
 } as const;
+
+/**
+ * Mapa amplo dos possiveis valores de status da Evolution v2 / Baileys.
+ * O Baileys emite:
+ *   0=ERROR, 1=PENDING, 2=SERVER_ACK, 3=DELIVERY_ACK, 4=READ, 5=PLAYED
+ * Evolution v2 tipicamente manda o nome (SERVER_ACK, etc), mas ha versoes
+ * que mandam o numero e ha compat retroativa com sent/delivered/read.
+ */
+type OurStatus = "SENT" | "DELIVERED" | "READ";
+
+const MSG_STATUS_MAP: Record<string, OurStatus> = {
+  // Nomes antigos / customizados
+  sent: "SENT",
+  delivered: "DELIVERED",
+  read: "READ",
+  played: "READ",
+  // Nomes do Baileys/Evolution
+  server_ack: "SENT",
+  delivery_ack: "DELIVERED",
+  // Numericos como string
+  "2": "SENT",
+  "3": "DELIVERED",
+  "4": "READ",
+  "5": "READ",
+};
+
+function mapMessageStatus(raw: string | number | undefined): OurStatus | null {
+  if (raw == null) return null;
+  const key = String(raw).toLowerCase().trim();
+  return MSG_STATUS_MAP[key] ?? null;
+}
 
 // Palavras de opt-out (case/acento insensitive)
 const OPT_OUT_KEYWORDS = ["pare", "sair", "stop", "remover", "cancelar", "descadastrar"];
@@ -129,61 +163,72 @@ export async function POST(req: Request) {
 
       case "messages.update":
       case "send.message": {
-        const key = payload.data?.key;
-        const status = payload.data?.status;
-        if (key?.id && status) {
-          const statusMap = {
-            sent: "SENT",
-            delivered: "DELIVERED",
-            read: "READ",
-          } as const;
-          const mapped = statusMap[status.toLowerCase() as keyof typeof statusMap];
-          if (mapped) {
-            const now = new Date();
-            await prisma.messageJob.updateMany({
-              where: { whatsappMessageId: key.id },
-              data: {
-                status: mapped,
-                deliveredAt: mapped === "DELIVERED" ? now : undefined,
-                readAt: mapped === "READ" ? now : undefined,
-              },
-            });
-            // Se ficou READ, incrementa contador da campanha (sem duplicar)
-            if (mapped === "READ") {
-              const mj = await prisma.messageJob.findFirst({
-                where: { whatsappMessageId: key.id },
-                select: { campaignId: true },
-              });
-              if (mj) {
-                await prisma.campaign.update({
-                  where: { id: mj.campaignId },
-                  data: { readCount: { increment: 1 } },
-                });
-              }
-            }
-            if (mapped === "DELIVERED") {
-              const mj = await prisma.messageJob.findFirst({
-                where: { whatsappMessageId: key.id },
-                select: { campaignId: true },
-              });
-              if (mj) {
-                await prisma.campaign.update({
-                  where: { id: mj.campaignId },
-                  data: { deliveredCount: { increment: 1 } },
-                });
-              }
-            }
-          }
+        // Evolution v2 usa data.key.id OU data.keyId dependendo da versao
+        const msgId = payload.data?.key?.id ?? payload.data?.keyId;
+        const rawStatus = payload.data?.status;
+        const mapped = mapMessageStatus(rawStatus);
+
+        if (!msgId) {
+          console.warn(`[webhook] ${event} sem msgId — payload:`, JSON.stringify(payload.data));
+          break;
+        }
+        if (!mapped) {
+          console.warn(`[webhook] ${event} status desconhecido "${rawStatus}" — msgId=${msgId}`);
+          break;
+        }
+
+        // Le status anterior pra evitar duplicar incremento de contador
+        const existing = await prisma.messageJob.findFirst({
+          where: { whatsappMessageId: msgId },
+          select: { id: true, status: true, campaignId: true },
+        });
+        if (!existing) {
+          // Msg nossa mas nao achamos o job — pode ter sido deletado ou nao mapeado
+          break;
+        }
+
+        // So progride status: PENDING -> SENT -> DELIVERED -> READ (nao regride)
+        const rank: Record<string, number> = {
+          PENDING: 0, SCHEDULED: 0, SENDING: 1, SENT: 2, DELIVERED: 3, READ: 4,
+        };
+        if ((rank[existing.status] ?? -1) >= rank[mapped]) break;
+
+        const now = new Date();
+        await prisma.messageJob.update({
+          where: { id: existing.id },
+          data: {
+            status: mapped,
+            deliveredAt: mapped === "DELIVERED" ? now : undefined,
+            readAt: mapped === "READ" ? now : undefined,
+          },
+        });
+
+        // Incrementa contadores da campanha (uma vez por transicao)
+        if (mapped === "DELIVERED") {
+          await prisma.campaign.update({
+            where: { id: existing.campaignId },
+            data: { deliveredCount: { increment: 1 } },
+          });
+        } else if (mapped === "READ") {
+          await prisma.campaign.update({
+            where: { id: existing.campaignId },
+            data: {
+              readCount: { increment: 1 },
+              // Se pulou direto de SENT pra READ, tambem conta como entregue
+              deliveredCount: existing.status === "SENT" ? { increment: 1 } : undefined,
+            },
+          });
         }
         break;
       }
 
       case "messages.upsert": {
         // Mensagens recebidas OU enviadas. Nos interessa fromMe=false (recebidas).
-        const key = payload.data?.key;
-        if (!key || key.fromMe) break;
+        const fromMe = payload.data?.key?.fromMe ?? payload.data?.fromMe;
+        if (fromMe) break;
 
-        const number = jidToNumber(key.remoteJid);
+        const remoteJid = payload.data?.key?.remoteJid ?? payload.data?.remoteJid;
+        const number = jidToNumber(remoteJid);
         if (!number) break;
 
         // Descobre o owner via instancia (webhook nao carrega ownerId)
