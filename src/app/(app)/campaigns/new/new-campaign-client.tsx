@@ -376,7 +376,7 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
 
           {showMediaUpload && (
             <div>
-              <Label>Arquivo (máx 200 MB — atenção: WhatsApp aceita até ~64MB por vídeo)</Label>
+              <Label>Arquivo (máx 200 MB)</Label>
               {mediaFile ? (
                 <div className="mt-1.5 flex items-center gap-2 border-2 border-emerald-500/40 rounded-md p-2 bg-emerald-50 dark:bg-emerald-950/20">
                   <FileIcon className="h-4 w-4 text-emerald-600" />

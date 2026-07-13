@@ -6,7 +6,9 @@ import { getOwnerId } from "@/lib/auth-owner";
 import { uploadObject } from "@/lib/s3";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const runtime = "nodejs";
+// Uploads grandes: dar tempo pra leitura do body + envio pro S3
+export const maxDuration = 300;
 
 const MAX_SIZE_MB = 200;
 const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024;
@@ -37,8 +39,16 @@ function safeFilename(name: string) {
 export async function POST(req: Request) {
   const ownerId = await getOwnerId();
 
-  const form = await req.formData().catch(() => null);
-  if (!form) return NextResponse.json({ error: "form invalido" }, { status: 400 });
+  const form = await req.formData().catch((err) => {
+    console.error("[upload] req.formData() falhou:", err);
+    return null;
+  });
+  if (!form) {
+    return NextResponse.json(
+      { error: "Nao foi possivel ler o arquivo (timeout ou body invalido) — veja pm2 logs dmassa-web" },
+      { status: 400 },
+    );
+  }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "arquivo ausente" }, { status: 400 });
