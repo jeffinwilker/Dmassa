@@ -146,33 +146,50 @@ export async function POST(
   const schedule = computeSchedule(campaign, assignments, instances);
 
   const queue = campaignQueue();
-  const nowMs = Date.now();
   let enqueued = 0;
+  const enqueueErrors: string[] = [];
   for (const item of schedule) {
     const mj = jobByContact.get(item.contactId);
     if (!mj) continue;
     if (["SENT", "DELIVERED", "READ"].includes(mj.status)) continue;
 
-    await queue.add(
-      "send",
+    try {
+      await queue.add(
+        "send",
+        {
+          messageJobId: mj.id,
+          campaignId: id,
+          contactId: item.contactId,
+          instanceId: item.instanceId,
+        },
+        {
+          delay: item.delayMs,
+          // BullMQ v5 nao aceita ":" em custom jobId -> usar "-"
+          jobId: `mj-${mj.id}`,
+        },
+      );
+      enqueued++;
+      await prisma.messageJob.update({
+        where: { id: mj.id },
+        data: { instanceId: item.instanceId, status: "SCHEDULED" },
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      // Se ja existir job (retry), BullMQ v5 devolve o existente — mas se
+      // outra falha (Redis fora, etc), registramos e continuamos.
+      enqueueErrors.push(`${mj.id}: ${msg}`);
+      console.error("[start] enqueue falhou:", mj.id, msg);
+    }
+  }
+
+  if (enqueued === 0) {
+    return NextResponse.json(
       {
-        messageJobId: mj.id,
-        campaignId: id,
-        contactId: item.contactId,
-        instanceId: item.instanceId,
+        error: "Falha ao enfileirar todos os envios",
+        details: enqueueErrors.slice(0, 5),
       },
-      {
-        delay: item.delayMs,
-        jobId: `mj:${mj.id}`, // idempotente
-      },
+      { status: 500 },
     );
-    enqueued++;
-    // Atualiza instanceId caso tenha mudado
-    await prisma.messageJob.update({
-      where: { id: mj.id },
-      data: { instanceId: item.instanceId, status: "SCHEDULED" },
-    });
-    void nowMs;
   }
 
   // 7. Marca campanha como RUNNING

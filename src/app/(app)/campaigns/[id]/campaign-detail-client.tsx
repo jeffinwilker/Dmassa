@@ -157,9 +157,20 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      const data = await res.json().catch(() => ({}));
+      const text = await res.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text.slice(0, 200) || `HTTP ${res.status}` };
+      }
       if (!res.ok) {
-        toast.error(data.error ?? "Erro");
+        const errStr = typeof data.error === "string" ? data.error : `HTTP ${res.status}`;
+        const details = Array.isArray(data.details) && data.details.length
+          ? ` — ${(data.details as string[]).join(", ")}`
+          : "";
+        toast.error(`${errStr}${details}`);
+        console.error(`[campaign] ${path} falhou:`, res.status, data);
         return;
       }
       if (okMsg) toast.success(okMsg);
@@ -171,8 +182,9 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
 
   async function startCampaign() {
     const data = await action("/start", "POST", "Campanha iniciada");
-    if (data?.ok) {
-      toast.info(`${data.enqueued} envios agendados`);
+    if (data && data["ok"]) {
+      const enq = data["enqueued"];
+      toast.info(`${enq} envios agendados`);
       refresh();
     }
   }
