@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import {
   Upload,
   X,
-  Sparkles,
   Users,
   Clock,
   Smartphone,
@@ -22,17 +21,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { TagChip } from "@/components/contacts/tag-chip";
+import { MessageEditor } from "@/components/campaigns/message-editor";
 
 interface Tag {
   id: string;
@@ -128,7 +120,6 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
   const [scheduledFor, setScheduledFor] = React.useState<string>("");
 
   const [saving, setSaving] = React.useState(false);
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   // Preview do publico
   const previewAudience = React.useCallback(async () => {
@@ -153,20 +144,6 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
     const t = setTimeout(previewAudience, 250);
     return () => clearTimeout(t);
   }, [previewAudience]);
-
-  function insertVarAtCursor(varName: string) {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    const insert = `{${varName}}`;
-    const next = text.slice(0, start) + insert + text.slice(end);
-    setText(next);
-    setTimeout(() => {
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = start + insert.length;
-    }, 0);
-  }
 
   async function onFilePick(f: File | null) {
     if (!f) return;
@@ -335,60 +312,16 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
 
           {(messageType === "TEXT" || showCaption) && (
             <div>
-              <div className="flex items-center justify-between">
-                <Label>{messageType === "TEXT" ? "Texto" : "Legenda (opcional)"}</Label>
-                <span className="text-xs text-muted-foreground">
-                  Use <code>{"{nome}"}</code>, <code>{"{primeiro_nome}"}</code> ou suas variáveis
-                </span>
-              </div>
-              <Textarea
-                ref={textareaRef}
+              <Label className="mb-1.5 block">
+                {messageType === "TEXT" ? "Texto" : "Legenda (opcional)"}
+              </Label>
+              <MessageEditor
                 value={messageType === "TEXT" ? text : caption}
-                onChange={(e) =>
-                  messageType === "TEXT" ? setText(e.target.value) : setCaption(e.target.value)
-                }
-                rows={5}
+                onChange={(v) => (messageType === "TEXT" ? setText(v) : setCaption(v))}
+                spintaxVars={spintaxVars}
                 placeholder="Ex: Olá {primeiro_nome}, {saudacao}!"
-                className="mt-1.5"
+                rows={messageType === "TEXT" ? 6 : 3}
               />
-              {messageType === "TEXT" && spintaxVars.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-xs cursor-pointer text-muted-foreground hover:text-foreground flex items-center gap-1">
-                    <Sparkles className="h-3 w-3" /> Inserir variável
-                  </summary>
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {[
-                      { name: "nome", label: "Nome" },
-                      { name: "primeiro_nome", label: "Primeiro nome" },
-                      { name: "whatsapp", label: "WhatsApp" },
-                    ].map((v) => (
-                      <button
-                        key={v.name}
-                        type="button"
-                        onClick={() => insertVarAtCursor(v.name)}
-                        className="text-xs bg-muted hover:bg-accent px-2 py-1 rounded font-mono"
-                      >
-                        {"{" + v.name + "}"}
-                      </button>
-                    ))}
-                    {spintaxVars.map((v) => (
-                      <button
-                        key={v.name}
-                        type="button"
-                        onClick={() => insertVarAtCursor(v.name)}
-                        className={`text-xs px-2 py-1 rounded font-mono ${
-                          v.isSystem
-                            ? "bg-muted hover:bg-accent"
-                            : "bg-primary/10 hover:bg-primary/20 text-primary"
-                        }`}
-                        title={v.sampleValues.join(", ")}
-                      >
-                        {"{" + v.name + "}"}
-                      </button>
-                    ))}
-                  </div>
-                </details>
-              )}
             </div>
           )}
 
