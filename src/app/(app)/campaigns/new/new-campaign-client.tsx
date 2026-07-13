@@ -153,7 +153,7 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
     if (!f) return;
 
     // Validacoes client-side
-    const MAX_MB = 90;
+    const MAX_MB = 200;
     if (f.size > MAX_MB * 1024 * 1024) {
       const mb = (f.size / 1024 / 1024).toFixed(1);
       setUploadError(`Arquivo tem ${mb} MB — o limite é ${MAX_MB} MB. Comprima o vídeo antes.`);
@@ -374,7 +374,7 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
 
           {showMediaUpload && (
             <div>
-              <Label>Arquivo (máx 90 MB)</Label>
+              <Label>Arquivo (máx 200 MB — atenção: WhatsApp aceita até ~64MB por vídeo)</Label>
               {mediaFile ? (
                 <div className="mt-1.5 flex items-center gap-2 border-2 border-emerald-500/40 rounded-md p-2 bg-emerald-50 dark:bg-emerald-950/20">
                   <FileIcon className="h-4 w-4 text-emerald-600" />

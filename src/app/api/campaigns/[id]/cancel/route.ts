@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getOwnerId } from "@/lib/auth-owner";
 import { campaignQueue } from "@/lib/queue";
+import { maybeCleanupMedia } from "@/lib/media-cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,11 @@ export async function POST(
     }
   } catch (err) {
     console.warn("cancel: falha limpando fila:", (err as Error).message);
+  }
+
+  // Se essa campanha tinha midia e nao ha outras ativas usando, deleta do storage
+  if (campaign.mediaAssetId) {
+    await maybeCleanupMedia(campaign.mediaAssetId).catch(() => undefined);
   }
 
   return NextResponse.json({ ok: true, skippedJobs: pending.count });

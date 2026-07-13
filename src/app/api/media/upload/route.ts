@@ -8,7 +8,7 @@ import { uploadObject } from "@/lib/s3";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_SIZE_MB = 90;
+const MAX_SIZE_MB = 200;
 const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024;
 
 const KIND_BY_MIME: Array<[RegExp, MediaKind]> = [

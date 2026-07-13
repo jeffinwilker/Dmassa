@@ -14,6 +14,7 @@ import {
 } from "@/lib/spintax/render";
 import type { CampaignJobData } from "@/lib/queue";
 import { sleep, randInt } from "@/lib/utils";
+import { maybeCompleteCampaign } from "@/lib/media-cleanup";
 
 export async function processMessageJob(data: CampaignJobData): Promise<void> {
   const { messageJobId } = data;
@@ -129,6 +130,8 @@ export async function processMessageJob(data: CampaignJobData): Promise<void> {
       where: { id: campaign.id },
       data: { sentCount: { increment: 1 } },
     });
+    // Se foi o ultimo, marca COMPLETED e deleta midia
+    await maybeCompleteCampaign(campaign.id);
   } catch (err) {
     const message =
       err instanceof EvolutionError
@@ -146,6 +149,7 @@ export async function processMessageJob(data: CampaignJobData): Promise<void> {
       where: { id: campaign.id },
       data: { failedCount: { increment: 1 } },
     });
+    await maybeCompleteCampaign(campaign.id);
     throw err;
   }
 }
@@ -163,6 +167,7 @@ async function markSkipped(id: string, reason: string) {
       where: { id: j.campaignId },
       data: { skippedCount: { increment: 1 } },
     });
+    await maybeCompleteCampaign(j.campaignId);
   }
 }
 
@@ -177,6 +182,7 @@ async function markFailed(id: string, reason: string) {
       where: { id: j.campaignId },
       data: { failedCount: { increment: 1 } },
     });
+    await maybeCompleteCampaign(j.campaignId);
   }
 }
 

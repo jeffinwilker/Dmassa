@@ -153,16 +153,17 @@ model SpintaxVariable {
 // =========================================================================
 
 model MediaAsset {
-  id        String     @id @default(cuid())
-  ownerId   String
-  kind      MediaKind
-  fileName  String
-  mimeType  String
-  size      Int
-  key       String     // S3 key
-  url       String     // URL publica (usada no envio via Evolution)
-  duration  Int?       // segundos (audio/video)
-  createdAt DateTime   @default(now())
+  id                     String     @id @default(cuid())
+  ownerId                String
+  kind                   MediaKind
+  fileName               String
+  mimeType               String
+  size                   Int
+  key                    String     // S3 key
+  url                    String     // URL publica (usada no envio via Evolution)
+  duration               Int?       // segundos (audio/video)
+  deletedFromStorageAt   DateTime?  // limpeza automatica pos campanha
+  createdAt              DateTime   @default(now())
 
   campaigns Campaign[]
 

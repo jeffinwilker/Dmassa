@@ -58,7 +58,13 @@ interface Campaign {
   scheduledFor: string | null;
   startedAt: string | null;
   completedAt: string | null;
-  media: { url: string; fileName: string; mimeType: string; kind: string } | null;
+  media: {
+    url: string;
+    fileName: string;
+    mimeType: string;
+    kind: string;
+    deletedFromStorageAt: string | null;
+  } | null;
   instances: { instance: { id: string; name: string } }[];
 }
 
@@ -354,6 +360,11 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
             {campaign.media && (
               <div className="mt-2 text-xs text-muted-foreground">
                 Mídia: <b>{campaign.media.fileName}</b> ({campaign.media.mimeType})
+                {campaign.media.deletedFromStorageAt && (
+                  <span className="ml-2 text-warning">
+                    • arquivo removido do storage (economia de espaço)
+                  </span>
+                )}
               </div>
             )}
             {campaign.caption && (
