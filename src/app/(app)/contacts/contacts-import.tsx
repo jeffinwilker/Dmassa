@@ -28,6 +28,24 @@ interface Parsed {
 
 const NONE_COL = "__none__";
 
+/**
+ * Detecta encoding do CSV: UTF-8 vs windows-1252 (Excel BR).
+ * Escolhe o que tiver menos caracteres de substituicao U+FFFD.
+ */
+function decodeCsvSmartClient(buf: ArrayBuffer): string {
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  const badU8 = (utf8.match(/�/g) ?? []).length;
+  if (badU8 <= 2) return utf8;
+  try {
+    const win = new TextDecoder("windows-1252", { fatal: false }).decode(buf);
+    const badWin = (win.match(/�/g) ?? []).length;
+    if (badWin < badU8) return win;
+  } catch {
+    // encoding sem suporte no browser
+  }
+  return utf8;
+}
+
 async function parseFileClient(file: File): Promise<Parsed> {
   const name = file.name.toLowerCase();
   if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
@@ -51,7 +69,9 @@ async function parseFileClient(file: File): Promise<Parsed> {
       }),
     };
   }
-  const text = await file.text();
+  // CSV: detecta encoding UTF-8 vs windows-1252 (Excel BR)
+  const buf = await file.arrayBuffer();
+  const text = decodeCsvSmartClient(buf);
   const parsed = Papa.parse<Record<string, string>>(text, {
     header: true,
     skipEmptyLines: true,

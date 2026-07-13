@@ -6,6 +6,30 @@ export interface ParsedTable {
   rows: Record<string, string>[];
 }
 
+/**
+ * Detecta encoding do arquivo CSV.
+ * Tenta UTF-8 primeiro (padrao moderno). Se aparecerem muitos U+FFFD
+ * (caracteres de substituicao — indicam bytes invalidos), tenta
+ * windows-1252 (comum em CSV do Excel BR). Usa o que tiver menos falhas.
+ */
+export function decodeCsvSmart(buf: ArrayBuffer): string {
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  const badU8 = (utf8.match(/�/g) ?? []).length;
+
+  // Poucas falhas em UTF-8 -> aceita direto
+  if (badU8 <= 2) return utf8;
+
+  // Tenta windows-1252 (compat com Latin-1)
+  try {
+    const win = new TextDecoder("windows-1252", { fatal: false }).decode(buf);
+    const badWin = (win.match(/�/g) ?? []).length;
+    if (badWin < badU8) return win;
+  } catch {
+    // encoding pode nao ser suportado em algum runtime; fallback UTF-8
+  }
+  return utf8;
+}
+
 /** Detecta e parseia CSV/XLSX pra estrutura uniforme. */
 export async function parseFileToTable(file: File): Promise<ParsedTable> {
   const name = file.name.toLowerCase();
@@ -31,8 +55,8 @@ export async function parseFileToTable(file: File): Promise<ParsedTable> {
     };
   }
 
-  // CSV (ou TSV — Papa detecta delimitador)
-  const text = new TextDecoder("utf-8").decode(buf);
+  // CSV (ou TSV — Papa detecta delimitador). Detecta encoding automaticamente.
+  const text = decodeCsvSmart(buf);
   const parsed = Papa.parse<Record<string, string>>(text, {
     header: true,
     skipEmptyLines: true,
