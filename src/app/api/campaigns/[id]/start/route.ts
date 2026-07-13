@@ -145,6 +145,14 @@ export async function POST(
   // 6. Calcula cronograma e enfileira
   const schedule = computeSchedule(campaign, assignments, instances);
 
+  // Offset base: se agendada pra futuro, todos os jobs sao delayed por
+  // (scheduledFor - agora) alem do delay individual.
+  const nowMs = Date.now();
+  const baseOffsetMs =
+    campaign.scheduledFor && campaign.scheduledFor.getTime() > nowMs
+      ? campaign.scheduledFor.getTime() - nowMs
+      : 0;
+
   const queue = campaignQueue();
   let enqueued = 0;
   const enqueueErrors: string[] = [];
@@ -163,7 +171,7 @@ export async function POST(
           instanceId: item.instanceId,
         },
         {
-          delay: item.delayMs,
+          delay: item.delayMs + baseOffsetMs,
           // BullMQ v5 nao aceita ":" em custom jobId -> usar "-"
           jobId: `mj-${mj.id}`,
         },

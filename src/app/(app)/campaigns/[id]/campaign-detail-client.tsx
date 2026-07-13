@@ -13,6 +13,7 @@ import {
   XCircle,
   Clock,
   Eye,
+  CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -111,6 +112,7 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
   const [jobFilter, setJobFilter] = React.useState<string>("all");
   const [busy, setBusy] = React.useState(false);
   const [testOpen, setTestOpen] = React.useState(false);
+  const [scheduleOpen, setScheduleOpen] = React.useState(false);
 
   const isTerminal = ["COMPLETED", "CANCELLED"].includes(campaign.status);
   const isRunning = campaign.status === "RUNNING";
@@ -180,11 +182,44 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
     }
   }
 
-  async function startCampaign() {
+  async function sendNow() {
+    // Se tinha agendamento, limpa antes pra disparar ja
+    if (campaign.scheduledFor) {
+      await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledFor: null }),
+      });
+    }
     const data = await action("/start", "POST", "Campanha iniciada");
     if (data && data["ok"]) {
       const enq = data["enqueued"];
-      toast.info(`${enq} envios agendados`);
+      const noWa = data["excludedNoWaCount"];
+      const info = noWa ? ` (${enq} agendados, ${noWa} pulados sem WhatsApp)` : ` (${enq} agendados)`;
+      toast.info(info);
+      refresh();
+    }
+  }
+
+  async function scheduleAndStart(when: Date) {
+    setBusy(true);
+    try {
+      const patchRes = await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledFor: when.toISOString() }),
+      });
+      if (!patchRes.ok) {
+        const d = await patchRes.json().catch(() => ({}));
+        toast.error(d.error ?? "Erro ao agendar");
+        return;
+      }
+    } finally {
+      setBusy(false);
+    }
+    const data = await action("/start", "POST");
+    if (data && data["ok"]) {
+      toast.success(`Agendada para ${when.toLocaleString("pt-BR")}`);
       refresh();
     }
   }
@@ -236,9 +271,20 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
                 <RefreshCw className={busy ? "animate-spin" : ""} />
               </Button>
               {canStart && (
-                <Button onClick={startCampaign} disabled={busy}>
-                  <Play /> {campaign.status === "PAUSED" ? "Continuar" : "Iniciar"}
-                </Button>
+                <>
+                  {campaign.status !== "PAUSED" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setScheduleOpen(true)}
+                      disabled={busy}
+                    >
+                      <CalendarClock /> Agendar
+                    </Button>
+                  )}
+                  <Button onClick={sendNow} disabled={busy}>
+                    <Play /> {campaign.status === "PAUSED" ? "Continuar" : "Enviar agora"}
+                  </Button>
+                </>
               )}
               {isRunning && (
                 <>
@@ -432,6 +478,17 @@ export function CampaignDetailClient({ campaign: initial, connectedInstances }: 
         campaignId={campaign.id}
         instances={connectedInstances}
       />
+
+      {/* Dialog de agendamento */}
+      <ScheduleDialog
+        open={scheduleOpen}
+        onOpenChange={setScheduleOpen}
+        initial={campaign.scheduledFor}
+        onConfirm={async (when) => {
+          setScheduleOpen(false);
+          await scheduleAndStart(when);
+        }}
+      />
     </div>
   );
 }
@@ -545,6 +602,79 @@ function TestSendDialog({
           </Button>
           <Button onClick={send} disabled={loading || !number.trim()}>
             {loading ? "Enviando..." : "Enviar teste"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------- Dialog de agendamento ------------------------------------------
+
+function toLocalDatetimeInput(iso: string | null) {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 60 * 60 * 1000); // +1h
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+function ScheduleDialog({
+  open,
+  onOpenChange,
+  initial,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initial: string | null;
+  onConfirm: (when: Date) => void | Promise<void>;
+}) {
+  const [value, setValue] = React.useState("");
+
+  React.useEffect(() => {
+    if (open) setValue(toLocalDatetimeInput(initial));
+  }, [open, initial]);
+
+  const parsed = value ? new Date(value) : null;
+  const isFuture = parsed && parsed.getTime() > Date.now();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Agendar envio</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Data e hora</Label>
+            <Input
+              type="datetime-local"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="mt-1.5"
+            />
+            {!isFuture && parsed && (
+              <p className="text-xs text-destructive mt-1">
+                Escolha um horário no futuro.
+              </p>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Os envios ficam agendados no BullMQ e disparam automaticamente na hora escolhida,
+            respeitando os delays e o horário permitido.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => parsed && isFuture && onConfirm(parsed)}
+            disabled={!parsed || !isFuture}
+          >
+            <CalendarClock /> Agendar e enfileirar
           </Button>
         </DialogFooter>
       </DialogContent>
