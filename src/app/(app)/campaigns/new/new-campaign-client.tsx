@@ -83,6 +83,8 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
   const [mediaAssetId, setMediaAssetId] = React.useState<string | null>(null);
   const [mediaFile, setMediaFile] = React.useState<{ id: string; fileName: string; url: string } | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState(0);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
 
   // Localizacao
   const [locationLat, setLocationLat] = React.useState<string>("");
@@ -146,22 +148,67 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
   }, [previewAudience]);
 
   async function onFilePick(f: File | null) {
+    setUploadError(null);
+    setUploadProgress(0);
     if (!f) return;
+
+    // Validacoes client-side
+    const MAX_MB = 90;
+    if (f.size > MAX_MB * 1024 * 1024) {
+      const mb = (f.size / 1024 / 1024).toFixed(1);
+      setUploadError(`Arquivo tem ${mb} MB — o limite é ${MAX_MB} MB. Comprima o vídeo antes.`);
+      return;
+    }
+    if (f.size === 0) {
+      setUploadError("Arquivo vazio.");
+      return;
+    }
+
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const res = await fetch("/api/media/upload", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error ?? "Erro no upload");
+      // XMLHttpRequest pra ter evento de progresso (fetch nao tem)
+      const result = await new Promise<{ ok: boolean; data: Record<string, unknown> }>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/media/upload");
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+          } catch {
+            parsed = { error: xhr.responseText.slice(0, 300) || `HTTP ${xhr.status}` };
+          }
+          resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: parsed });
+        };
+        xhr.onerror = () => {
+          resolve({
+            ok: false,
+            data: { error: "Falha de rede — verifique conexão e limite do proxy" },
+          });
+        };
+        const fd = new FormData();
+        fd.append("file", f);
+        xhr.send(fd);
+      });
+
+      if (!result.ok) {
+        const errMsg = typeof result.data.error === "string" ? result.data.error : "Erro no upload";
+        setUploadError(errMsg);
+        console.error("[upload] falhou:", result.data);
+        toast.error(errMsg);
         return;
       }
-      setMediaAssetId(data.media.id);
-      setMediaFile({ id: data.media.id, fileName: data.media.fileName, url: data.media.url });
+      const media = result.data.media as { id: string; fileName: string; url: string };
+      setMediaAssetId(media.id);
+      setMediaFile({ id: media.id, fileName: media.fileName, url: media.url });
       toast.success("Mídia carregada");
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   }
 
@@ -327,19 +374,19 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
 
           {showMediaUpload && (
             <div>
-              <Label>Arquivo</Label>
+              <Label>Arquivo (máx 90 MB)</Label>
               {mediaFile ? (
-                <div className="mt-1.5 flex items-center gap-2 border rounded-md p-2 bg-muted/30">
-                  <FileIcon className="h-4 w-4" />
+                <div className="mt-1.5 flex items-center gap-2 border-2 border-emerald-500/40 rounded-md p-2 bg-emerald-50 dark:bg-emerald-950/20">
+                  <FileIcon className="h-4 w-4 text-emerald-600" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{mediaFile.fileName}</div>
+                    <div className="text-sm truncate font-medium">✓ {mediaFile.fileName}</div>
                     <a
                       href={mediaFile.url}
                       target="_blank"
                       rel="noreferrer"
                       className="text-xs text-primary hover:underline"
                     >
-                      Ver
+                      Ver arquivo enviado
                     </a>
                   </div>
                   <Button
@@ -348,20 +395,40 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
                     onClick={() => {
                       setMediaAssetId(null);
                       setMediaFile(null);
+                      setUploadError(null);
                     }}
+                    title="Remover"
                   >
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
               ) : (
-                <div className="mt-1.5">
+                <div className="mt-1.5 space-y-2">
                   <Input
                     type="file"
                     accept={ACCEPT_BY_TYPE[messageType]}
                     onChange={(e) => onFilePick(e.target.files?.[0] ?? null)}
                     disabled={uploading}
                   />
-                  {uploading && <p className="text-xs text-muted-foreground mt-1">Enviando...</p>}
+                  {uploading && (
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Enviando... {uploadProgress}%
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {uploadError && (
+                    <div className="text-xs text-destructive border border-destructive/30 bg-destructive/5 rounded p-2">
+                      <div className="font-medium">Falha no upload</div>
+                      <div>{uploadError}</div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
