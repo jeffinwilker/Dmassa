@@ -25,6 +25,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TagChip } from "@/components/contacts/tag-chip";
 import { MessageEditor } from "@/components/campaigns/message-editor";
+import { MessagePreview } from "@/components/campaigns/message-preview";
 
 interface Tag {
   id: string;
@@ -310,7 +311,8 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
   const showMediaUpload = ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT"].includes(messageType);
 
   return (
-    <div className="space-y-4">
+    <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+      <div className="space-y-4 min-w-0">
       {/* Nome */}
       <Card>
         <CardContent className="pt-4">
@@ -787,6 +789,20 @@ export function NewCampaignClient({ tags, instances, spintaxVars }: Props) {
           {scheduledFor ? "Agendar" : "Salvar e iniciar agora"}
         </Button>
       </div>
+      </div>
+
+      {/* Coluna direita: previa */}
+      <aside className="lg:block">
+        <MessagePreview
+          messageType={messageType}
+          text={text}
+          caption={caption}
+          mediaFile={mediaFile}
+          spintaxVars={spintaxVars}
+          locationName={locationName}
+          contactVcardName={contactVcardName}
+        />
+      </aside>
     </div>
   );
 }
