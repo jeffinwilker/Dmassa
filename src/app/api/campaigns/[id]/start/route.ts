@@ -4,6 +4,7 @@ import { getOwnerId } from "@/lib/auth-owner";
 import { campaignQueue } from "@/lib/queue";
 import { buildAudienceWhere } from "@/lib/audience";
 import { assignInstancesToContacts, computeSchedule } from "@/lib/scheduler";
+import { validateContactsHaveWhatsapp } from "@/lib/validate-numbers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -45,13 +46,13 @@ export async function POST(
   }
 
   // 2. Resolver contatos alvo
-  let contactIds: string[];
+  let contacts;
   if (campaign.audienceMode === "MANUAL") {
     const rows = await prisma.campaignContact.findMany({
       where: { campaignId: id },
-      select: { contactId: true },
+      include: { contact: true },
     });
-    contactIds = rows.map((r) => r.contactId);
+    contacts = rows.map((r) => r.contact);
   } else {
     const where = buildAudienceWhere(ownerId, {
       mode: campaign.audienceMode as "ALL" | "TAGS" | "MANUAL",
@@ -60,12 +61,42 @@ export async function POST(
       excludeBlacklisted: campaign.excludeBlacklisted,
       excludeInConversation: campaign.excludeInConversation,
     });
-    const contacts = await prisma.contact.findMany({ where, select: { id: true } });
-    contactIds = contacts.map((c) => c.id);
+    contacts = await prisma.contact.findMany({ where });
   }
-  if (contactIds.length === 0) {
+  if (contacts.length === 0) {
     return NextResponse.json({ error: "Nenhum contato no publico-alvo" }, { status: 400 });
   }
+
+  // 2.5. Validar previamente se numeros tem WhatsApp (anti-ban).
+  //     Chama Evolution em batches usando a primeira instancia conectada.
+  let validationReport: {
+    validated: number;
+    hasWa: number;
+    noWa: number;
+    errors: number;
+  } | null = null;
+  let excludedNoWaCount = 0;
+  if (campaign.validateBeforeSend) {
+    validationReport = await validateContactsHaveWhatsapp(contacts, instances[0]);
+    // recarrega hasWhatsapp atualizado
+    const ids = contacts.map((c) => c.id);
+    const fresh = await prisma.contact.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, hasWhatsapp: true },
+    });
+    const hasWaById = new Map(fresh.map((c) => [c.id, c.hasWhatsapp]));
+    const filtered = contacts.filter((c) => hasWaById.get(c.id) !== false);
+    excludedNoWaCount = contacts.length - filtered.length;
+    contacts = filtered;
+    if (contacts.length === 0) {
+      return NextResponse.json(
+        { error: "Nenhum contato valido apos validacao (todos sem WhatsApp)" },
+        { status: 400 },
+      );
+    }
+  }
+
+  const contactIds = contacts.map((c) => c.id);
 
   // 3. Distribui em instancias respeitando peso + limite diario
   const assignments = assignInstancesToContacts(contactIds, instances);
@@ -159,6 +190,8 @@ export async function POST(
     ok: true,
     totalContacts: contactIds.length,
     enqueued,
+    excludedNoWaCount,
+    validation: validationReport,
     estimatedFinishInSec: Math.max(...schedule.map((s) => s.delayMs), 0) / 1000,
   });
 }

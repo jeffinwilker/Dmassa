@@ -1,4 +1,5 @@
 "use client";
+import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -11,9 +12,11 @@ import {
   Ban,
   Send,
   LogOut,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ChangePasswordDialog } from "./change-password-dialog";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -33,6 +36,7 @@ interface Props {
 export function Sidebar({ userEmail, userName }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+  const [changePwOpen, setChangePwOpen] = React.useState(false);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -69,7 +73,7 @@ export function Sidebar({ userEmail, userName }: Props) {
           );
         })}
       </nav>
-      <div className="border-t p-3 space-y-2">
+      <div className="border-t p-3 space-y-1">
         {userEmail && (
           <div className="px-3 py-1">
             <div className="text-xs font-medium truncate">{userName ?? userEmail}</div>
@@ -82,11 +86,20 @@ export function Sidebar({ userEmail, userName }: Props) {
           variant="ghost"
           size="sm"
           className="w-full justify-start text-muted-foreground"
+          onClick={() => setChangePwOpen(true)}
+        >
+          <KeyRound /> Trocar senha
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start text-muted-foreground"
           onClick={logout}
         >
           <LogOut /> Sair
         </Button>
       </div>
+      <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
     </aside>
   );
 }

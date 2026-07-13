@@ -46,6 +46,38 @@ function buildWeightedPool(instances: Instance[]): string[] {
 }
 
 /**
+ * Aquecimento de chip: cap diario cresce por 14 dias.
+ * Stage 0 = chip acabou de conectar. Stage 14 = maduro (usa maxPerDay cheio).
+ */
+const WARMUP_SCHEDULE = [
+  30,  // dia 0
+  60,  // dia 1
+  100, // dia 2
+  150,
+  200,
+  250,
+  300,
+  350,
+  400,
+  450,
+  500,
+  600,
+  700,
+  800,
+  1000, // dia 14 (efetivamente sem cap de warmup)
+];
+
+export function warmupCap(stage: number): number {
+  const s = Math.max(0, Math.min(14, stage));
+  return WARMUP_SCHEDULE[s];
+}
+
+/** Cap efetivo por dia = min(maxPerDay, warmupCap(stage)). */
+export function effectiveMaxPerDay(instance: Instance): number {
+  return Math.min(instance.maxPerDay, warmupCap(instance.warmupStage));
+}
+
+/**
  * Distribui contatos entre instancias respeitando pesos e limite diario.
  * Retorna array na mesma ordem dos contatos (com instanceId atribuido).
  */
@@ -59,7 +91,7 @@ export function assignInstancesToContacts(
   const pool = buildWeightedPool(active);
   const capacityByInstance = new Map<string, number>();
   for (const i of active) {
-    capacityByInstance.set(i.id, Math.max(0, i.maxPerDay - i.sentToday));
+    capacityByInstance.set(i.id, Math.max(0, effectiveMaxPerDay(i) - i.sentToday));
   }
 
   const result: { contactId: string; instanceId: string }[] = [];

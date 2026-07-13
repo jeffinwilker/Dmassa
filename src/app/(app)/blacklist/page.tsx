@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { BlacklistClient } from "./blacklist-client";
 
 export const dynamic = "force-dynamic";
 
@@ -8,13 +8,9 @@ export default function BlacklistPage() {
     <div>
       <PageHeader
         title="Blacklist"
-        description="Números que optaram por não receber mais mensagens (opt-out automático quando o contato responde PARE, SAIR, STOP, REMOVER)."
+        description="Contatos que optaram por não receber mais mensagens. Opt-out automático quando responderem PARE, SAIR, STOP, REMOVER, CANCELAR."
       />
-      <Card>
-        <CardContent className="py-16 text-center text-muted-foreground">
-          Em construção (Fase 3).
-        </CardContent>
-      </Card>
+      <BlacklistClient />
     </div>
   );
 }
