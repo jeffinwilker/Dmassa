@@ -15,6 +15,7 @@ import {
 import type { CampaignJobData } from "@/lib/queue";
 import { sleep, randInt } from "@/lib/utils";
 import { maybeCompleteCampaign } from "@/lib/media-cleanup";
+import { isSentTodayStale } from "@/lib/scheduler";
 
 export async function processMessageJob(data: CampaignJobData): Promise<void> {
   const { messageJobId } = data;
@@ -122,9 +123,19 @@ export async function processMessageJob(data: CampaignJobData): Promise<void> {
         sentAt: new Date(),
       },
     });
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { sentToday: { increment: 1 } },
+    // Incrementa contador diario, zerando antes se virou o dia.
+    await prisma.$transaction(async (tx) => {
+      const fresh = await tx.instance.findUnique({
+        where: { id: instance.id },
+        select: { lastResetAt: true },
+      });
+      const stale = fresh ? isSentTodayStale(fresh.lastResetAt) : false;
+      await tx.instance.update({
+        where: { id: instance.id },
+        data: stale
+          ? { sentToday: 1, lastResetAt: new Date() }
+          : { sentToday: { increment: 1 } },
+      });
     });
     await prisma.campaign.update({
       where: { id: campaign.id },

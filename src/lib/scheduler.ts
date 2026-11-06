@@ -8,6 +8,9 @@
  *  - ajuste enterprise (+30s texto / +90s midia)
  *  - rotacao ponderada de instancias (weighted round-robin)
  *  - embaralhamento da ordem dos contatos (se shuffleContacts)
+ *  - DISTRIBUICAO MULTI-DIA: respeita o limite diario (maxPerDay) de cada
+ *    chip e a janela de horario permitida (allowedHourStart..allowedHourEnd).
+ *    O que nao couber hoje e agendado pro(s) dia(s) seguinte(s).
  */
 import type { Campaign, Instance } from "@prisma/client";
 import { randInt, shuffle } from "@/lib/utils";
@@ -78,48 +81,65 @@ export function effectiveMaxPerDay(instance: Instance): number {
 }
 
 /**
- * Distribui contatos entre instancias respeitando pesos e limite diario.
- * Retorna array na mesma ordem dos contatos (com instanceId atribuido).
+ * true se `lastResetAt` for anterior a meia-noite (local) de hoje — ou seja,
+ * o contador diario `sentToday` esta "velho" e deve ser zerado.
+ */
+export function isSentTodayStale(lastResetAt: Date, now: Date = new Date()): boolean {
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  return lastResetAt.getTime() < midnight.getTime();
+}
+
+/**
+ * Distribui contatos entre instancias (round-robin ponderado).
+ * NAO rejeita mais por capacidade diaria — o cap diario agora e aplicado
+ * em computeSchedule, que espalha os envios por varios dias.
  */
 export function assignInstancesToContacts(
   contactIds: string[],
   instances: Instance[],
 ): { contactId: string; instanceId: string }[] | { error: string } {
-  const active = instances.filter((i) => i.status === "CONNECTED");
-  if (active.length === 0) return { error: "nenhuma instancia conectada" };
-
-  const pool = buildWeightedPool(active);
-  const capacityByInstance = new Map<string, number>();
-  for (const i of active) {
-    capacityByInstance.set(i.id, Math.max(0, effectiveMaxPerDay(i) - i.sentToday));
+  const active = instances.filter(
+    (i) => i.status === "CONNECTED" && effectiveMaxPerDay(i) > 0,
+  );
+  if (active.length === 0) {
+    return { error: "nenhuma instancia conectada com capacidade disponivel" };
   }
 
+  const pool = buildWeightedPool(active);
   const result: { contactId: string; instanceId: string }[] = [];
-  let cursor = 0;
-  for (const contactId of contactIds) {
-    // Encontra proxima instancia com capacidade
-    let picked: string | null = null;
-    for (let tries = 0; tries < pool.length * 2; tries++) {
-      const cand = pool[cursor % pool.length];
-      cursor++;
-      const cap = capacityByInstance.get(cand) ?? 0;
-      if (cap > 0) {
-        picked = cand;
-        capacityByInstance.set(cand, cap - 1);
-        break;
-      }
-    }
-    if (!picked) {
-      return { error: "capacidade diaria das instancias esgotada" };
-    }
-    result.push({ contactId, instanceId: picked });
+  for (let idx = 0; idx < contactIds.length; idx++) {
+    result.push({ contactId: contactIds[idx], instanceId: pool[idx % pool.length] });
   }
   return result;
 }
 
+/** Janela (start/end em ms) de um dia especifico, em horario LOCAL do servidor. */
+function dayWindow(
+  baseNow: number,
+  dayOffset: number,
+  startHour: number,
+  endHour: number,
+): { start: number; end: number } {
+  const start = new Date(baseNow);
+  start.setDate(start.getDate() + dayOffset);
+  start.setHours(startHour, 0, 0, 0);
+  const end = new Date(baseNow);
+  end.setDate(end.getDate() + dayOffset);
+  end.setHours(endHour, 0, 0, 0);
+  return { start: start.getTime(), end: end.getTime() };
+}
+
 /**
- * Calcula cronograma de disparos.
- * assignments = saida de assignInstancesToContacts (ja com instancia atribuida).
+ * Calcula cronograma de disparos espalhado por varios dias.
+ *
+ * Para cada instancia: enche no maximo `effectiveMaxPerDay` envios por dia,
+ * todos dentro da janela [allowedHourStart, allowedHourEnd). O primeiro envio
+ * do dia cai no inicio da janela; os seguintes recebem delay aleatorio +
+ * descanso periodico + ajuste enterprise. Quando estoura o cap do dia OU
+ * passaria do fim da janela, pula pro inicio da janela do dia seguinte.
+ *
+ * `now` e injetavel pra facilitar testes.
  */
 export function computeSchedule(
   campaign: Pick<
@@ -130,9 +150,12 @@ export function computeSchedule(
     | "restEveryN"
     | "restForSec"
     | "shuffleContacts"
+    | "allowedHourStart"
+    | "allowedHourEnd"
   >,
   assignments: { contactId: string; instanceId: string }[],
   instances: Instance[],
+  now: number = Date.now(),
 ): ScheduledSend[] {
   const env = envDefaults();
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT"].includes(campaign.messageType);
@@ -140,33 +163,88 @@ export function computeSchedule(
     ? env.enterpriseExtraMedia * 1000
     : env.enterpriseExtraText * 1000;
 
+  // Janela sanitizada: se invalida (fim <= inicio), usa o dia inteiro.
+  let startHour = campaign.allowedHourStart;
+  let endHour = campaign.allowedHourEnd;
+  if (!(endHour > startHour)) {
+    startHour = 0;
+    endHour = 24;
+  }
+
   const instanceById = new Map(instances.map((i) => [i.id, i]));
 
   let ordered = assignments;
   if (campaign.shuffleContacts) ordered = shuffle(assignments);
 
-  const out: ScheduledSend[] = [];
-  let cumMs = 0;
-
-  for (let i = 0; i < ordered.length; i++) {
-    const a = ordered[i];
-    const inst = instanceById.get(a.instanceId);
-
-    // Delta aleatorio entre delayMin e delayMax
-    let deltaMs = i === 0 ? 0 : randInt(campaign.delayMinSec, campaign.delayMaxSec) * 1000;
-
-    // Descanso periodico: apos cada restEveryN mensagens
-    if (i > 0 && campaign.restEveryN > 0 && i % campaign.restEveryN === 0) {
-      deltaMs += campaign.restForSec * 1000;
-    }
-
-    // Enterprise adjustment
-    if (inst?.tier === "ENTERPRISE") {
-      deltaMs += enterpriseExtra;
-    }
-
-    cumMs += deltaMs;
-    out.push({ contactId: a.contactId, instanceId: a.instanceId, delayMs: cumMs });
+  // Agrupa por instancia preservando a ordem.
+  const byInstance = new Map<string, string[]>();
+  for (const a of ordered) {
+    const arr = byInstance.get(a.instanceId);
+    if (arr) arr.push(a.contactId);
+    else byInstance.set(a.instanceId, [a.contactId]);
   }
+
+  const out: ScheduledSend[] = [];
+
+  for (const [instanceId, contactIds] of byInstance) {
+    const inst = instanceById.get(instanceId);
+    const cap = inst ? effectiveMaxPerDay(inst) : 0;
+    if (cap <= 0) continue; // sem capacidade: nao agenda (nao deveria ocorrer)
+
+    const isEnterprise = inst?.tier === "ENTERPRISE";
+    const alreadyToday = inst ? Math.max(0, inst.sentToday) : 0;
+
+    // Estado do dia corrente para esta instancia.
+    let dayOffset = 0;
+    let win = dayWindow(now, dayOffset, startHour, endHour);
+    let cursorMs = Math.max(now, win.start);
+    // Capacidade restante HOJE desconta o que o chip ja enviou hoje.
+    let slotsLeft = Math.max(0, cap - alreadyToday);
+    let sentThisDay = 0;
+    let firstOfDay = true;
+
+    const advanceDay = () => {
+      dayOffset++;
+      win = dayWindow(now, dayOffset, startHour, endHour);
+      cursorMs = win.start;
+      slotsLeft = cap;
+      sentThisDay = 0;
+      firstOfDay = true;
+    };
+
+    // Se hoje ja acabou (fora da janela) ou sem capacidade, comeca amanha.
+    while (cursorMs >= win.end || slotsLeft <= 0) {
+      advanceDay();
+    }
+
+    for (const contactId of contactIds) {
+      // Sem slot hoje -> proximo dia.
+      if (slotsLeft <= 0) advanceDay();
+
+      let delta = 0;
+      if (!firstOfDay) {
+        delta = randInt(campaign.delayMinSec, campaign.delayMaxSec) * 1000;
+        if (campaign.restEveryN > 0 && sentThisDay % campaign.restEveryN === 0) {
+          delta += campaign.restForSec * 1000;
+        }
+        if (isEnterprise) delta += enterpriseExtra;
+      }
+
+      let target = cursorMs + delta;
+      // Se passaria do fim da janela, joga pro inicio da janela do dia seguinte.
+      if (target >= win.end) {
+        advanceDay();
+        target = cursorMs; // primeiro do novo dia cai no inicio da janela
+      }
+
+      cursorMs = target;
+      out.push({ contactId, instanceId, delayMs: cursorMs - now });
+
+      slotsLeft--;
+      sentThisDay++;
+      firstOfDay = false;
+    }
+  }
+
   return out;
 }

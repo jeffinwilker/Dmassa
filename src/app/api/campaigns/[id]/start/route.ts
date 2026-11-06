@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getOwnerId } from "@/lib/auth-owner";
 import { campaignQueue } from "@/lib/queue";
 import { buildAudienceWhere } from "@/lib/audience";
-import { assignInstancesToContacts, computeSchedule } from "@/lib/scheduler";
+import { assignInstancesToContacts, computeSchedule, isSentTodayStale } from "@/lib/scheduler";
 import { validateContactsHaveWhatsapp } from "@/lib/validate-numbers";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,21 @@ export async function POST(
       { error: "Nenhuma instancia conectada disponivel pra esta campanha" },
       { status: 400 },
     );
+  }
+
+  // 1.5. Reset diario do contador `sentToday`: se a ultima virada foi antes da
+  //      meia-noite de hoje, zera (anti-ban por dia). Reflete em memoria pra
+  //      capacidade de HOJE sair correta no agendamento.
+  const nowDate = new Date();
+  const staleIds = instances.filter((i) => isSentTodayStale(i.lastResetAt, nowDate)).map((i) => i.id);
+  if (staleIds.length) {
+    await prisma.instance.updateMany({
+      where: { id: { in: staleIds } },
+      data: { sentToday: 0, lastResetAt: nowDate },
+    });
+    for (const inst of instances) {
+      if (staleIds.includes(inst.id)) inst.sentToday = 0;
+    }
   }
 
   // 2. Resolver contatos alvo

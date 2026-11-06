@@ -10,7 +10,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(80),
   tier: z.enum(["STANDARD", "ENTERPRISE"]).default("STANDARD"),
   weight: z.number().int().min(1).max(100).default(1),
-  maxPerDay: z.number().int().min(1).max(10000).default(500),
+  maxPerDay: z.number().int().min(1).max(10000).default(200),
 });
 
 /** Converte um nome amigavel em identificador seguro pro Evolution. */

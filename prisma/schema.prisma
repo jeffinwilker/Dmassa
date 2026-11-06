@@ -48,7 +48,7 @@ model Instance {
   weight            Int            @default(1) // peso na rotacao
   // Aquecimento de chip: 0..14 (dias). 0 = chip novinho, 14 = totalmente maduro.
   warmupStage       Int            @default(14)
-  maxPerDay         Int            @default(500)
+  maxPerDay         Int            @default(200)
   sentToday         Int            @default(0)
   lastResetAt       DateTime       @default(now())
   lastQrCode        String?        // ultimo QR base64 recebido do Evolution

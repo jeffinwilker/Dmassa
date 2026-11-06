@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Settings2,
 } from "lucide-react";
 import type { Instance } from "@prisma/client";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,8 @@ export function InstancesClient({ initialInstances }: Props) {
   const [creating, setCreating] = React.useState(false);
   const [openCreate, setOpenCreate] = React.useState(false);
   const [qrInstance, setQrInstance] = React.useState<Instance | null>(null);
+  const [editInstance, setEditInstance] = React.useState<Instance | null>(null);
+  const [saving, setSaving] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     const res = await fetch("/api/instances", { cache: "no-store" });
@@ -136,6 +139,14 @@ export function InstancesClient({ initialInstances }: Props) {
                   <Button
                     size="sm"
                     variant="ghost"
+                    title="Editar limites"
+                    onClick={() => setEditInstance(inst)}
+                  >
+                    <Settings2 />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     onClick={async () => {
                       if (!confirm(`Remover a instância "${inst.name}"?`)) return;
                       const res = await fetch(`/api/instances/${inst.id}`, { method: "DELETE" });
@@ -195,6 +206,36 @@ export function InstancesClient({ initialInstances }: Props) {
           setInstances((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
         }}
       />
+
+      <EditInstanceDialog
+        instance={editInstance}
+        saving={saving}
+        onOpenChange={(o) => {
+          if (!o) setEditInstance(null);
+        }}
+        onSave={async (form) => {
+          if (!editInstance) return;
+          setSaving(true);
+          try {
+            const res = await fetch(`/api/instances/${editInstance.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(form),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              toast.error(data.error ?? "Erro ao salvar");
+              return;
+            }
+            toast.success("Instância atualizada");
+            setInstances((prev) => prev.map((i) => (i.id === data.instance.id ? data.instance : i)));
+            setEditInstance(null);
+            router.refresh();
+          } finally {
+            setSaving(false);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -220,14 +261,14 @@ function CreateInstanceDialog({
   const [name, setName] = React.useState("");
   const [tier, setTier] = React.useState<"STANDARD" | "ENTERPRISE">("STANDARD");
   const [weight, setWeight] = React.useState(1);
-  const [maxPerDay, setMaxPerDay] = React.useState(500);
+  const [maxPerDay, setMaxPerDay] = React.useState(200);
 
   React.useEffect(() => {
     if (!open) {
       setName("");
       setTier("STANDARD");
       setWeight(1);
-      setMaxPerDay(500);
+      setMaxPerDay(200);
     }
   }, [open]);
 
@@ -310,6 +351,122 @@ function CreateInstanceDialog({
             disabled={creating || !name.trim()}
           >
             {creating ? "Criando..." : "Criar instância"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------- Edit dialog -----------------------------------------------------
+
+function EditInstanceDialog({
+  instance,
+  saving,
+  onOpenChange,
+  onSave,
+}: {
+  instance: Instance | null;
+  saving: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSave: (form: {
+    name: string;
+    tier: "STANDARD" | "ENTERPRISE";
+    weight: number;
+    maxPerDay: number;
+  }) => Promise<void>;
+}) {
+  const [name, setName] = React.useState("");
+  const [tier, setTier] = React.useState<"STANDARD" | "ENTERPRISE">("STANDARD");
+  const [weight, setWeight] = React.useState(1);
+  const [maxPerDay, setMaxPerDay] = React.useState(200);
+
+  React.useEffect(() => {
+    if (instance) {
+      setName(instance.name);
+      setTier(instance.tier);
+      setWeight(instance.weight);
+      setMaxPerDay(instance.maxPerDay);
+    }
+  }, [instance?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Dialog open={!!instance} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Editar instância</DialogTitle>
+          <DialogDescription>
+            Ajuste o limite diário, o tipo de conexão e o peso na rotação. O limite diário é
+            espalhado automaticamente por vários dias nas campanhas.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="edit-name">Nome do chip</Label>
+            <Input
+              id="edit-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1.5"
+            />
+          </div>
+
+          <div>
+            <Label>Tipo de conexão</Label>
+            <Select value={tier} onValueChange={(v) => setTier(v as "STANDARD" | "ENTERPRISE")}>
+              <SelectTrigger className="mt-1.5">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="STANDARD">Standard — delays padrão</SelectItem>
+                <SelectItem value="ENTERPRISE">
+                  Enterprise — +30s texto / +90s mídia (automático)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="edit-weight">Peso na rotação</Label>
+              <Input
+                id="edit-weight"
+                type="number"
+                min={1}
+                max={100}
+                value={weight}
+                onChange={(e) => setWeight(Number(e.target.value))}
+                className="mt-1.5"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-maxPerDay">Máx. por dia</Label>
+              <Input
+                id="edit-maxPerDay"
+                type="number"
+                min={1}
+                max={10000}
+                value={maxPerDay}
+                onChange={(e) => setMaxPerDay(Number(e.target.value))}
+                className="mt-1.5"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Limite seguro por dia. O resto espera o dia seguinte.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => onSave({ name, tier, weight, maxPerDay })}
+            disabled={saving || !name.trim()}
+          >
+            {saving ? "Salvando..." : "Salvar"}
           </Button>
         </DialogFooter>
       </DialogContent>
